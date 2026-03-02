@@ -131,7 +131,7 @@ def _uid():
 
 @app.before_request
 def require_login():
-    public = {"login", "register", "static"}
+    public = {"login", "register", "static", "health"}
     if _has_google:
         public.update({"google.login", "google.authorized"})
     if request.endpoint and request.endpoint in public:
@@ -416,6 +416,25 @@ def api_delete_composant(composant_id):
     # Simple delete (setup ownership checked at page level)
     db.delete_composant(composant_id)
     return jsonify({"ok": True})
+
+
+@app.route("/api/health")
+def health():
+    """Debug endpoint to check DB connection."""
+    from utils.database import _DRIVER
+    try:
+        db = get_db()
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT 1")
+        row = cursor.fetchone()
+        return jsonify({
+            "ok": True,
+            "driver": _DRIVER,
+            "turso": db._is_turso,
+            "test_query": str(row),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "driver": _DRIVER}), 500
 
 
 if __name__ == "__main__":
