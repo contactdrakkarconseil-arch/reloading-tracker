@@ -422,8 +422,8 @@ def api_delete_composant(composant_id):
 def health():
     """Debug endpoint to check DB connection."""
     from utils.database import _DRIVER
-    turso_url = os.environ.get("TURSO_DATABASE_URL", "")
-    turso_token = os.environ.get("TURSO_AUTH_TOKEN", "")
+    turso_url = os.environ.get("TURSO_DATABASE_URL", "").strip()
+    turso_token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
     info = {
         "driver": _DRIVER,
         "url_len": len(turso_url),

@@ -49,8 +49,8 @@ def _rows_to_dicts(cursor, rows) -> List[Dict]:
 
 class Database:
     def __init__(self, db_path: Optional[str] = None):
-        turso_url = os.environ.get("TURSO_DATABASE_URL")
-        turso_token = os.environ.get("TURSO_AUTH_TOKEN")
+        turso_url = (os.environ.get("TURSO_DATABASE_URL") or "").strip()
+        turso_token = (os.environ.get("TURSO_AUTH_TOKEN") or "").strip()
 
         if turso_url and turso_token:
             # Convert libsql:// to https:// for the Python driver
