@@ -420,50 +420,16 @@ def api_delete_composant(composant_id):
 
 @app.route("/api/health")
 def health():
-    """Debug endpoint to check DB connection."""
+    """Health check endpoint."""
     from utils.database import _DRIVER
-    turso_url = os.environ.get("TURSO_DATABASE_URL", "").strip()
-    turso_token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
-    info = {
-        "driver": _DRIVER,
-        "url_len": len(turso_url),
-        "token_len": len(turso_token),
-        "url_repr": repr(turso_url),
-        "token_start": turso_token[:20] if turso_token else "not set",
-    }
-    # Try direct libsql connect
-    if _DRIVER == "libsql":
-        import libsql
-        info["libsql_version"] = getattr(libsql, "__version__", "unknown")
-        url = turso_url
-        if url.startswith("libsql://"):
-            url = url.replace("libsql://", "https://", 1)
-        info["connect_url"] = url
-        try:
-            conn = libsql.connect(database=url, auth_token=turso_token)
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            row = cursor.fetchone()
-            info["ok"] = True
-            info["test_query"] = str(row)
-            return jsonify(info)
-        except Exception as e:
-            info["ok"] = False
-            info["error"] = str(e)
-            info["error_type"] = type(e).__name__
-            return jsonify(info), 500
-    else:
-        try:
-            db = get_db()
-            cursor = db.conn.cursor()
-            cursor.execute("SELECT 1")
-            info["ok"] = True
-            info["test_query"] = str(cursor.fetchone())
-            return jsonify(info)
-        except Exception as e:
-            info["ok"] = False
-            info["error"] = str(e)
-            return jsonify(info), 500
+    try:
+        db = get_db()
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        return jsonify({"ok": True, "driver": _DRIVER})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":
