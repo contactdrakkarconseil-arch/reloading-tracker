@@ -422,6 +422,8 @@ def api_delete_composant(composant_id):
 def health():
     """Debug endpoint to check DB connection."""
     from utils.database import _DRIVER
+    turso_url = os.environ.get("TURSO_DATABASE_URL", "")
+    turso_token = os.environ.get("TURSO_AUTH_TOKEN", "")
     try:
         db = get_db()
         cursor = db.conn.cursor()
@@ -432,9 +434,18 @@ def health():
             "driver": _DRIVER,
             "turso": db._is_turso,
             "test_query": str(row),
+            "url_prefix": turso_url[:30] if turso_url else "not set",
+            "url_len": len(turso_url),
+            "token_len": len(turso_token),
         })
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e), "driver": _DRIVER}), 500
+        return jsonify({
+            "ok": False, "error": str(e), "driver": _DRIVER,
+            "url_prefix": turso_url[:30] if turso_url else "not set",
+            "url_len": len(turso_url),
+            "token_len": len(turso_token),
+            "url_repr": repr(turso_url[:40]),
+        }), 500
 
 
 if __name__ == "__main__":
