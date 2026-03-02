@@ -53,6 +53,9 @@ class Database:
         turso_token = os.environ.get("TURSO_AUTH_TOKEN")
 
         if turso_url and turso_token:
+            # Convert libsql:// to https:// for the Python driver
+            if turso_url.startswith("libsql://"):
+                turso_url = turso_url.replace("libsql://", "https://", 1)
             self.conn = _connect(turso_url, auth_token=turso_token)
             self._is_turso = True
         else:
