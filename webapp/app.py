@@ -424,28 +424,46 @@ def health():
     from utils.database import _DRIVER
     turso_url = os.environ.get("TURSO_DATABASE_URL", "")
     turso_token = os.environ.get("TURSO_AUTH_TOKEN", "")
-    try:
-        db = get_db()
-        cursor = db.conn.cursor()
-        cursor.execute("SELECT 1")
-        row = cursor.fetchone()
-        return jsonify({
-            "ok": True,
-            "driver": _DRIVER,
-            "turso": db._is_turso,
-            "test_query": str(row),
-            "url_prefix": turso_url[:30] if turso_url else "not set",
-            "url_len": len(turso_url),
-            "token_len": len(turso_token),
-        })
-    except Exception as e:
-        return jsonify({
-            "ok": False, "error": str(e), "driver": _DRIVER,
-            "url_prefix": turso_url[:30] if turso_url else "not set",
-            "url_len": len(turso_url),
-            "token_len": len(turso_token),
-            "url_repr": repr(turso_url[:40]),
-        }), 500
+    info = {
+        "driver": _DRIVER,
+        "url_len": len(turso_url),
+        "token_len": len(turso_token),
+        "url_repr": repr(turso_url),
+        "token_start": turso_token[:20] if turso_token else "not set",
+    }
+    # Try direct libsql connect
+    if _DRIVER == "libsql":
+        import libsql
+        info["libsql_version"] = getattr(libsql, "__version__", "unknown")
+        url = turso_url
+        if url.startswith("libsql://"):
+            url = url.replace("libsql://", "https://", 1)
+        info["connect_url"] = url
+        try:
+            conn = libsql.connect(database=url, auth_token=turso_token)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            row = cursor.fetchone()
+            info["ok"] = True
+            info["test_query"] = str(row)
+            return jsonify(info)
+        except Exception as e:
+            info["ok"] = False
+            info["error"] = str(e)
+            info["error_type"] = type(e).__name__
+            return jsonify(info), 500
+    else:
+        try:
+            db = get_db()
+            cursor = db.conn.cursor()
+            cursor.execute("SELECT 1")
+            info["ok"] = True
+            info["test_query"] = str(cursor.fetchone())
+            return jsonify(info)
+        except Exception as e:
+            info["ok"] = False
+            info["error"] = str(e)
+            return jsonify(info), 500
 
 
 if __name__ == "__main__":
