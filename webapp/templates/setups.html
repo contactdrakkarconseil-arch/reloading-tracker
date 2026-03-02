@@ -1,18 +1,25 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1 class="text-xl font-bold mb-4">Mes Setups</h1>
+<div class="flex justify-between items-center mb-4">
+    <h1 class="text-xl font-bold">Mes Setups</h1>
+    <button onclick="openSetupForm()" class="btn-primary" style="padding:8px 16px; font-size:14px;">+ Nouveau</button>
+</div>
 
 {% for item in setups_data %}
 {% set s = item.setup %}
 {% set composants = item.composants %}
 {% set best = item.best %}
 
-<div class="card mb-4">
+<div class="card mb-4" id="setup-{{ s.id }}">
     <div class="flex justify-between items-start mb-3">
         <div>
             <div class="text-lg font-bold">{{ s.nom }}</div>
             <div class="text-sm text-blue-400">{{ s.calibre }}</div>
+        </div>
+        <div class="flex gap-2">
+            <button onclick='editSetup({{ s | tojson }})' class="text-xs text-gray-400 hover:text-blue-400 px-2 py-1">Modifier</button>
+            <button onclick="deleteSetup({{ s.id }}, '{{ s.nom }}')" class="text-xs text-gray-400 hover:text-red-400 px-2 py-1">Suppr.</button>
         </div>
     </div>
 
@@ -35,7 +42,7 @@
         <div>{{ "%.2f"|format(s.oal_ref_mm) }} mm</div>
         {% endif %}
         {% if s.suppresseur %}
-        <div class="text-gray-400">Suppressor</div>
+        <div class="text-gray-400">Suppresseur</div>
         <div>{{ s.suppresseur }}</div>
         {% endif %}
         {% if s.chrono %}
@@ -45,20 +52,22 @@
     </div>
 
     <!-- Composants -->
+    <div id="composants-{{ s.id }}">
     {% for c in composants %}
-    <div class="composant-row">
+    <div class="composant-row" id="comp-{{ c.id }}">
         <span class="composant-type">{{ c.type }}</span>
         <span>{{ c.marque }} {{ c.modele }}</span>
         {% if c.type == 'Poudre' and c.details %}
-            <div class="text-xs text-gray-500 ml-auto">
-                {{ c.details.get('charge_min_gr', '') }}–{{ c.details.get('charge_max_gr', '') }} gr
-            </div>
+            <span class="text-xs text-gray-500 ml-auto">{{ c.details.get('charge_min_gr', '') }}–{{ c.details.get('charge_max_gr', '') }} gr</span>
         {% endif %}
         {% if c.type == 'Ogive' and c.details and c.details.get('poids_gr') %}
             <span class="text-xs text-gray-500 ml-auto">{{ c.details.poids_gr }} gr</span>
         {% endif %}
+        <button onclick="deleteComposant({{ c.id }})" class="text-xs text-red-400/50 hover:text-red-400 ml-1">&times;</button>
     </div>
     {% endfor %}
+    </div>
+    <button onclick="openComposantForm({{ s.id }})" class="text-xs text-blue-400 mt-2 hover:underline">+ Composant</button>
 
     <!-- Best stats -->
     {% if best %}
@@ -94,7 +103,243 @@
 
 {% if not setups_data %}
 <div class="text-center text-gray-500 py-8">
-    Aucun setup configuré.
+    Aucun setup configuré.<br>
+    <button onclick="openSetupForm()" class="text-blue-400 mt-2">Créer le premier</button>
 </div>
 {% endif %}
+
+<!-- ══ Modal Setup ══ -->
+<div id="setup-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('setup-modal')">
+    <div class="modal-box">
+        <div class="flex justify-between items-center mb-4">
+            <h2 id="setup-modal-title" class="text-lg font-bold">Nouveau Setup</h2>
+            <button onclick="closeModal('setup-modal')" class="text-gray-400 text-xl">&times;</button>
+        </div>
+        <form id="setup-form" onsubmit="saveSetup(event)">
+            <input type="hidden" id="sf-id">
+            <div class="grid grid-cols-2 gap-3">
+                <div class="col-span-2">
+                    <label class="field-label">Nom *</label>
+                    <input type="text" id="sf-nom" class="field-input" required>
+                </div>
+                <div>
+                    <label class="field-label">Calibre *</label>
+                    <input type="text" id="sf-calibre" class="field-input" required>
+                </div>
+                <div>
+                    <label class="field-label">Twist</label>
+                    <input type="text" id="sf-twist" class="field-input" placeholder='1:7.5"'>
+                </div>
+                <div>
+                    <label class="field-label">Canon (mm)</label>
+                    <input type="number" id="sf-canon" class="field-input" step="0.1">
+                </div>
+                <div>
+                    <label class="field-label">CBTO Lands (mm)</label>
+                    <input type="number" id="sf-cbto" class="field-input" step="0.01">
+                </div>
+                <div>
+                    <label class="field-label">OAL réf. (mm)</label>
+                    <input type="number" id="sf-oal" class="field-input" step="0.01">
+                </div>
+                <div>
+                    <label class="field-label">Suppresseur</label>
+                    <input type="text" id="sf-supp" class="field-input">
+                </div>
+                <div>
+                    <label class="field-label">Lunette</label>
+                    <input type="text" id="sf-lunette" class="field-input">
+                </div>
+                <div>
+                    <label class="field-label">Chrono</label>
+                    <input type="text" id="sf-chrono" class="field-input">
+                </div>
+                <div class="col-span-2">
+                    <label class="field-label">Notes</label>
+                    <textarea id="sf-notes" class="field-input" rows="2"></textarea>
+                </div>
+            </div>
+            <button type="submit" class="btn-primary w-full mt-4">Enregistrer</button>
+        </form>
+    </div>
+</div>
+
+<!-- ══ Modal Composant ══ -->
+<div id="comp-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('comp-modal')">
+    <div class="modal-box">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-bold">Ajouter un composant</h2>
+            <button onclick="closeModal('comp-modal')" class="text-gray-400 text-xl">&times;</button>
+        </div>
+        <form id="comp-form" onsubmit="saveComposant(event)">
+            <input type="hidden" id="cf-setup-id">
+            <label class="field-label">Type *</label>
+            <select id="cf-type" class="field-input" required onchange="togglePowderFields()">
+                <option value="Ogive">Ogive</option>
+                <option value="Poudre">Poudre</option>
+                <option value="Amorce">Amorce</option>
+                <option value="Étuis">Étuis</option>
+            </select>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Marque</label>
+                    <input type="text" id="cf-marque" class="field-input">
+                </div>
+                <div>
+                    <label class="field-label">Modèle</label>
+                    <input type="text" id="cf-modele" class="field-input">
+                </div>
+            </div>
+            <!-- Powder-specific fields -->
+            <div id="powder-fields" class="hidden">
+                <div class="grid grid-cols-3 gap-3">
+                    <div>
+                        <label class="field-label">Charge min (gr)</label>
+                        <input type="number" id="cf-cmin" class="field-input" step="0.1">
+                    </div>
+                    <div>
+                        <label class="field-label">Charge max (gr)</label>
+                        <input type="number" id="cf-cmax" class="field-input" step="0.1">
+                    </div>
+                    <div>
+                        <label class="field-label">P. max (psi)</label>
+                        <input type="number" id="cf-pmax" class="field-input" step="100">
+                    </div>
+                </div>
+            </div>
+            <!-- Bullet weight -->
+            <div id="bullet-fields">
+                <label class="field-label">Poids (gr)</label>
+                <input type="number" id="cf-poids" class="field-input" step="0.1">
+            </div>
+            <button type="submit" class="btn-primary w-full mt-4">Ajouter</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Modal helpers ──
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function openSetupForm(data) {
+    document.getElementById('sf-id').value = '';
+    document.getElementById('sf-nom').value = '';
+    document.getElementById('sf-calibre').value = '';
+    document.getElementById('sf-twist').value = '';
+    document.getElementById('sf-canon').value = '';
+    document.getElementById('sf-cbto').value = '';
+    document.getElementById('sf-oal').value = '';
+    document.getElementById('sf-supp').value = '';
+    document.getElementById('sf-lunette').value = '';
+    document.getElementById('sf-chrono').value = '';
+    document.getElementById('sf-notes').value = '';
+    document.getElementById('setup-modal-title').textContent = 'Nouveau Setup';
+    document.getElementById('setup-modal').classList.remove('hidden');
+}
+
+function editSetup(s) {
+    document.getElementById('sf-id').value = s.id;
+    document.getElementById('sf-nom').value = s.nom || '';
+    document.getElementById('sf-calibre').value = s.calibre || '';
+    document.getElementById('sf-twist').value = s.twist || '';
+    document.getElementById('sf-canon').value = s.longueur_canon_mm || '';
+    document.getElementById('sf-cbto').value = s.cbto_lands_mm || '';
+    document.getElementById('sf-oal').value = s.oal_ref_mm || '';
+    document.getElementById('sf-supp').value = s.suppresseur || '';
+    document.getElementById('sf-lunette').value = s.lunette || '';
+    document.getElementById('sf-chrono').value = s.chrono || '';
+    document.getElementById('sf-notes').value = s.notes || '';
+    document.getElementById('setup-modal-title').textContent = 'Modifier Setup';
+    document.getElementById('setup-modal').classList.remove('hidden');
+}
+
+async function saveSetup(e) {
+    e.preventDefault();
+    const id = document.getElementById('sf-id').value;
+    const data = {
+        nom: document.getElementById('sf-nom').value,
+        calibre: document.getElementById('sf-calibre').value,
+        twist: document.getElementById('sf-twist').value || null,
+        longueur_canon_mm: parseFloat(document.getElementById('sf-canon').value) || null,
+        cbto_lands_mm: parseFloat(document.getElementById('sf-cbto').value) || null,
+        oal_ref_mm: parseFloat(document.getElementById('sf-oal').value) || null,
+        suppresseur: document.getElementById('sf-supp').value || null,
+        lunette: document.getElementById('sf-lunette').value || null,
+        chrono: document.getElementById('sf-chrono').value || null,
+        notes: document.getElementById('sf-notes').value || null,
+    };
+    const url = id ? `/api/setup/${id}` : '/api/setup';
+    const method = id ? 'PUT' : 'POST';
+    const resp = await fetch(url, {
+        method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+    });
+    if (resp.ok) {
+        window.location.reload();
+    } else {
+        const err = await resp.json();
+        alert(err.error || 'Erreur');
+    }
+}
+
+async function deleteSetup(id, nom) {
+    if (!confirm(`Supprimer "${nom}" et toutes ses données ?`)) return;
+    const resp = await fetch(`/api/setup/${id}`, { method: 'DELETE' });
+    if (resp.ok) window.location.reload();
+}
+
+// ── Composants ──
+function openComposantForm(setupId) {
+    document.getElementById('cf-setup-id').value = setupId;
+    document.getElementById('cf-type').value = 'Ogive';
+    document.getElementById('cf-marque').value = '';
+    document.getElementById('cf-modele').value = '';
+    document.getElementById('cf-cmin').value = '';
+    document.getElementById('cf-cmax').value = '';
+    document.getElementById('cf-pmax').value = '';
+    document.getElementById('cf-poids').value = '';
+    togglePowderFields();
+    document.getElementById('comp-modal').classList.remove('hidden');
+}
+
+function togglePowderFields() {
+    const type = document.getElementById('cf-type').value;
+    document.getElementById('powder-fields').classList.toggle('hidden', type !== 'Poudre');
+    document.getElementById('bullet-fields').classList.toggle('hidden', type !== 'Ogive');
+}
+
+async function saveComposant(e) {
+    e.preventDefault();
+    const setupId = document.getElementById('cf-setup-id').value;
+    const type = document.getElementById('cf-type').value;
+    const details = {};
+    if (type === 'Poudre') {
+        const cmin = parseFloat(document.getElementById('cf-cmin').value);
+        const cmax = parseFloat(document.getElementById('cf-cmax').value);
+        const pmax = parseFloat(document.getElementById('cf-pmax').value);
+        if (cmin) details.charge_min_gr = cmin;
+        if (cmax) details.charge_max_gr = cmax;
+        if (pmax) details.pression_max_psi = pmax;
+    }
+    if (type === 'Ogive') {
+        const poids = parseFloat(document.getElementById('cf-poids').value);
+        if (poids) details.poids_gr = poids;
+    }
+    const data = {
+        type, marque: document.getElementById('cf-marque').value,
+        modele: document.getElementById('cf-modele').value, details
+    };
+    const resp = await fetch(`/api/setup/${setupId}/composant`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+    });
+    if (resp.ok) window.location.reload();
+}
+
+async function deleteComposant(id) {
+    if (!confirm('Supprimer ce composant ?')) return;
+    const resp = await fetch(`/api/composant/${id}`, { method: 'DELETE' });
+    if (resp.ok) document.getElementById('comp-' + id).remove();
+}
+</script>
 {% endblock %}

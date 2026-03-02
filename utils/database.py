@@ -1,10 +1,29 @@
-"""SQLite database management."""
+"""SQLite / LibSQL database management – multi-tenant."""
 
-import sqlite3
 import json
 import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+
+# ── Driver selection: libsql on Vercel, sqlite3 locally ──────
+try:
+    import libsql
+
+    def _connect(db_path_or_url, auth_token=None):
+        if auth_token:
+            return libsql.connect(db_path_or_url, auth_token=auth_token)
+        return libsql.connect(db_path_or_url)
+
+    _DRIVER = "libsql"
+except ImportError:
+    import sqlite3
+
+    def _connect(db_path_or_url, auth_token=None):
+        conn = sqlite3.connect(db_path_or_url)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    _DRIVER = "sqlite3"
 
 
 def get_db_path() -> str:
@@ -14,20 +33,52 @@ def get_db_path() -> str:
     return str(app_dir / "reloading.db")
 
 
+def _row_to_dict(cursor, row) -> Dict:
+    """Convert a row tuple to dict using cursor.description."""
+    if isinstance(row, dict):
+        return row
+    if hasattr(row, "keys"):
+        return dict(row)
+    cols = [d[0] for d in cursor.description]
+    return dict(zip(cols, row))
+
+
+def _rows_to_dicts(cursor, rows) -> List[Dict]:
+    return [_row_to_dict(cursor, r) for r in rows]
+
+
 class Database:
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or get_db_path()
-        self.conn = sqlite3.connect(self.db_path)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        turso_url = os.environ.get("TURSO_DATABASE_URL")
+        turso_token = os.environ.get("TURSO_AUTH_TOKEN")
+
+        if turso_url and turso_token:
+            self.conn = _connect(turso_url, auth_token=turso_token)
+            self._is_turso = True
+        else:
+            self.db_path = db_path or get_db_path()
+            self.conn = _connect(self.db_path)
+            self._is_turso = False
+            self.conn.execute("PRAGMA journal_mode=WAL")
+
         self.conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
+        self._migrate()
 
     def _create_tables(self):
         cursor = self.conn.cursor()
-        cursor.executescript("""
-            CREATE TABLE IF NOT EXISTS setups (
+        statements = [
+            """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                password_hash TEXT,
+                google_id TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS setups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER REFERENCES users(id),
                 nom TEXT NOT NULL,
                 calibre TEXT NOT NULL,
                 longueur_canon_mm REAL,
@@ -40,9 +91,8 @@ class Database:
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS composants (
+            )""",
+            """CREATE TABLE IF NOT EXISTS composants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 setup_id INTEGER NOT NULL,
                 type TEXT NOT NULL,
@@ -50,9 +100,8 @@ class Database:
                 modele TEXT,
                 details_json TEXT DEFAULT '{}',
                 FOREIGN KEY (setup_id) REFERENCES setups(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS sessions (
+            )""",
+            """CREATE TABLE IF NOT EXISTS sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 setup_id INTEGER NOT NULL,
                 date TEXT NOT NULL,
@@ -62,9 +111,8 @@ class Database:
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (setup_id) REFERENCES setups(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS series (
+            )""",
+            """CREATE TABLE IF NOT EXISTS series (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id INTEGER NOT NULL,
                 charge_gr REAL NOT NULL,
@@ -83,20 +131,73 @@ class Database:
                 charge_retenue INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-            );
-        """)
+            )""",
+        ]
+        for stmt in statements:
+            cursor.execute(stmt)
         self.conn.commit()
 
-    # ── Setups ──────────────────────────────────────────────
+    def _migrate(self):
+        """Run incremental migrations."""
+        cursor = self.conn.cursor()
+        # Add user_id to setups if missing (legacy DB)
+        cursor.execute("PRAGMA table_info(setups)")
+        cols = [r[1] if isinstance(r, tuple) else r["name"] for r in cursor.fetchall()]
+        if "user_id" not in cols:
+            cursor.execute("ALTER TABLE setups ADD COLUMN user_id INTEGER REFERENCES users(id)")
+            self.conn.commit()
 
-    def create_setup(self, data: Dict[str, Any]) -> int:
+    # ── Users ────────────────────────────────────────────────
+
+    def create_user(self, data: Dict[str, Any]) -> int:
         cursor = self.conn.cursor()
         cursor.execute("""
-            INSERT INTO setups (nom, calibre, longueur_canon_mm, twist,
+            INSERT INTO users (email, name, password_hash, google_id)
+            VALUES (?, ?, ?, ?)
+        """, (
+            data["email"],
+            data["name"],
+            data.get("password_hash"),
+            data.get("google_id"),
+        ))
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_user(self, user_id: int) -> Optional[Dict]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        return _row_to_dict(cursor, row) if row else None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        row = cursor.fetchone()
+        return _row_to_dict(cursor, row) if row else None
+
+    def get_user_by_google_id(self, google_id: str) -> Optional[Dict]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+        row = cursor.fetchone()
+        return _row_to_dict(cursor, row) if row else None
+
+    def update_user_google_id(self, user_id: int, google_id: str):
+        self.conn.execute(
+            "UPDATE users SET google_id = ? WHERE id = ?", (google_id, user_id)
+        )
+        self.conn.commit()
+
+    # ── Setups ───────────────────────────────────────────────
+
+    def create_setup(self, data: Dict[str, Any], user_id: Optional[int] = None) -> int:
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO setups (user_id, nom, calibre, longueur_canon_mm, twist,
                                 suppresseur, lunette, chrono, cbto_lands_mm,
                                 oal_ref_mm, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
+            user_id,
             data.get("nom", ""),
             data.get("calibre", ""),
             data.get("longueur_canon_mm"),
@@ -111,44 +212,71 @@ class Database:
         self.conn.commit()
         return cursor.lastrowid
 
-    def get_setups(self) -> List[Dict]:
+    def get_setups(self, user_id: Optional[int] = None) -> List[Dict]:
         cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM setups ORDER BY nom")
-        return [dict(row) for row in cursor.fetchall()]
+        if user_id is not None:
+            cursor.execute(
+                "SELECT * FROM setups WHERE user_id = ? ORDER BY nom", (user_id,)
+            )
+        else:
+            cursor.execute("SELECT * FROM setups ORDER BY nom")
+        return _rows_to_dicts(cursor, cursor.fetchall())
 
-    def get_setup(self, setup_id: int) -> Optional[Dict]:
+    def get_setup(self, setup_id: int, user_id: Optional[int] = None) -> Optional[Dict]:
         cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM setups WHERE id = ?", (setup_id,))
+        if user_id is not None:
+            cursor.execute(
+                "SELECT * FROM setups WHERE id = ? AND user_id = ?",
+                (setup_id, user_id),
+            )
+        else:
+            cursor.execute("SELECT * FROM setups WHERE id = ?", (setup_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return _row_to_dict(cursor, row) if row else None
 
-    def update_setup(self, setup_id: int, data: Dict[str, Any]):
+    def update_setup(self, setup_id: int, data: Dict[str, Any], user_id: Optional[int] = None):
         cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE setups SET nom=?, calibre=?, longueur_canon_mm=?, twist=?,
-                             suppresseur=?, lunette=?, chrono=?, cbto_lands_mm=?,
-                             oal_ref_mm=?, notes=?, updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-        """, (
-            data.get("nom", ""),
-            data.get("calibre", ""),
-            data.get("longueur_canon_mm"),
-            data.get("twist"),
-            data.get("suppresseur"),
-            data.get("lunette"),
-            data.get("chrono"),
-            data.get("cbto_lands_mm"),
-            data.get("oal_ref_mm"),
-            data.get("notes"),
-            setup_id,
-        ))
+        if user_id is not None:
+            cursor.execute("""
+                UPDATE setups SET nom=?, calibre=?, longueur_canon_mm=?, twist=?,
+                                 suppresseur=?, lunette=?, chrono=?, cbto_lands_mm=?,
+                                 oal_ref_mm=?, notes=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND user_id=?
+            """, (
+                data.get("nom", ""), data.get("calibre", ""),
+                data.get("longueur_canon_mm"), data.get("twist"),
+                data.get("suppresseur"), data.get("lunette"),
+                data.get("chrono"), data.get("cbto_lands_mm"),
+                data.get("oal_ref_mm"), data.get("notes"),
+                setup_id, user_id,
+            ))
+        else:
+            cursor.execute("""
+                UPDATE setups SET nom=?, calibre=?, longueur_canon_mm=?, twist=?,
+                                 suppresseur=?, lunette=?, chrono=?, cbto_lands_mm=?,
+                                 oal_ref_mm=?, notes=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+            """, (
+                data.get("nom", ""), data.get("calibre", ""),
+                data.get("longueur_canon_mm"), data.get("twist"),
+                data.get("suppresseur"), data.get("lunette"),
+                data.get("chrono"), data.get("cbto_lands_mm"),
+                data.get("oal_ref_mm"), data.get("notes"),
+                setup_id,
+            ))
         self.conn.commit()
 
-    def delete_setup(self, setup_id: int):
-        self.conn.execute("DELETE FROM setups WHERE id = ?", (setup_id,))
+    def delete_setup(self, setup_id: int, user_id: Optional[int] = None):
+        if user_id is not None:
+            self.conn.execute(
+                "DELETE FROM setups WHERE id = ? AND user_id = ?",
+                (setup_id, user_id),
+            )
+        else:
+            self.conn.execute("DELETE FROM setups WHERE id = ?", (setup_id,))
         self.conn.commit()
 
-    # ── Composants ──────────────────────────────────────────
+    # ── Composants ───────────────────────────────────────────
 
     def add_composant(self, setup_id: int, data: Dict[str, Any]) -> int:
         cursor = self.conn.cursor()
@@ -171,10 +299,24 @@ class Database:
             "SELECT * FROM composants WHERE setup_id = ? ORDER BY type",
             (setup_id,),
         )
-        rows = [dict(row) for row in cursor.fetchall()]
+        rows = _rows_to_dicts(cursor, cursor.fetchall())
         for row in rows:
-            row["details"] = json.loads(row.get("details_json", "{}"))
+            row["details"] = json.loads(row.get("details_json") or "{}")
         return rows
+
+    def update_composant(self, composant_id: int, data: Dict[str, Any]):
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE composants SET type=?, marque=?, modele=?, details_json=?
+            WHERE id=?
+        """, (
+            data.get("type", ""),
+            data.get("marque", ""),
+            data.get("modele", ""),
+            json.dumps(data.get("details", {}), ensure_ascii=False),
+            composant_id,
+        ))
+        self.conn.commit()
 
     def delete_composant(self, composant_id: int):
         self.conn.execute("DELETE FROM composants WHERE id = ?", (composant_id,))
@@ -184,7 +326,7 @@ class Database:
         self.conn.execute("DELETE FROM composants WHERE setup_id = ?", (setup_id,))
         self.conn.commit()
 
-    # ── Sessions ────────────────────────────────────────────
+    # ── Sessions ─────────────────────────────────────────────
 
     def create_session(self, data: Dict[str, Any]) -> int:
         cursor = self.conn.cursor()
@@ -202,7 +344,7 @@ class Database:
         self.conn.commit()
         return cursor.lastrowid
 
-    def get_sessions(self, setup_id: Optional[int] = None) -> List[Dict]:
+    def get_sessions(self, setup_id: Optional[int] = None, user_id: Optional[int] = None) -> List[Dict]:
         cursor = self.conn.cursor()
         if setup_id:
             cursor.execute("""
@@ -212,6 +354,14 @@ class Database:
                 WHERE s.setup_id = ?
                 ORDER BY s.date DESC
             """, (setup_id,))
+        elif user_id is not None:
+            cursor.execute("""
+                SELECT s.*, st.nom as setup_nom
+                FROM sessions s
+                JOIN setups st ON s.setup_id = st.id
+                WHERE st.user_id = ?
+                ORDER BY s.date DESC
+            """, (user_id,))
         else:
             cursor.execute("""
                 SELECT s.*, st.nom as setup_nom
@@ -219,9 +369,9 @@ class Database:
                 JOIN setups st ON s.setup_id = st.id
                 ORDER BY s.date DESC
             """)
-        rows = [dict(row) for row in cursor.fetchall()]
+        rows = _rows_to_dicts(cursor, cursor.fetchall())
         for row in rows:
-            row["meteo"] = json.loads(row.get("meteo_json", "{}"))
+            row["meteo"] = json.loads(row.get("meteo_json") or "{}")
         return rows
 
     def get_session(self, session_id: int) -> Optional[Dict]:
@@ -234,8 +384,8 @@ class Database:
         """, (session_id,))
         row = cursor.fetchone()
         if row:
-            d = dict(row)
-            d["meteo"] = json.loads(d.get("meteo_json", "{}"))
+            d = _row_to_dict(cursor, row)
+            d["meteo"] = json.loads(d.get("meteo_json") or "{}")
             return d
         return None
 
@@ -243,7 +393,7 @@ class Database:
         self.conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self.conn.commit()
 
-    # ── Séries ──────────────────────────────────────────────
+    # ── Séries ───────────────────────────────────────────────
 
     def create_serie(self, data: Dict[str, Any]) -> int:
         cursor = self.conn.cursor()
@@ -279,15 +429,13 @@ class Database:
             "SELECT * FROM series WHERE session_id = ? ORDER BY charge_gr",
             (session_id,),
         )
-        rows = [dict(row) for row in cursor.fetchall()]
+        rows = _rows_to_dicts(cursor, cursor.fetchall())
         for row in rows:
-            row["vitesses"] = json.loads(row.get("vitesses_json", "[]"))
-            row["signes_pression"] = json.loads(
-                row.get("signes_pression_json", "[]")
-            )
+            row["vitesses"] = json.loads(row.get("vitesses_json") or "[]")
+            row["signes_pression"] = json.loads(row.get("signes_pression_json") or "[]")
         return rows
 
-    def get_all_series(self, setup_id: Optional[int] = None) -> List[Dict]:
+    def get_all_series(self, setup_id: Optional[int] = None, user_id: Optional[int] = None) -> List[Dict]:
         cursor = self.conn.cursor()
         if setup_id:
             cursor.execute("""
@@ -297,6 +445,15 @@ class Database:
                 WHERE s.setup_id = ?
                 ORDER BY s.date, sr.charge_gr
             """, (setup_id,))
+        elif user_id is not None:
+            cursor.execute("""
+                SELECT sr.*, s.date, s.phase, s.lieu
+                FROM series sr
+                JOIN sessions s ON sr.session_id = s.id
+                JOIN setups st ON s.setup_id = st.id
+                WHERE st.user_id = ?
+                ORDER BY s.date, sr.charge_gr
+            """, (user_id,))
         else:
             cursor.execute("""
                 SELECT sr.*, s.date, s.phase, s.lieu
@@ -304,12 +461,10 @@ class Database:
                 JOIN sessions s ON sr.session_id = s.id
                 ORDER BY s.date, sr.charge_gr
             """)
-        rows = [dict(row) for row in cursor.fetchall()]
+        rows = _rows_to_dicts(cursor, cursor.fetchall())
         for row in rows:
-            row["vitesses"] = json.loads(row.get("vitesses_json", "[]"))
-            row["signes_pression"] = json.loads(
-                row.get("signes_pression_json", "[]")
-            )
+            row["vitesses"] = json.loads(row.get("vitesses_json") or "[]")
+            row["signes_pression"] = json.loads(row.get("signes_pression_json") or "[]")
         return rows
 
     def update_serie_charge_retenue(self, serie_id: int, retenue: bool):
@@ -330,8 +485,7 @@ class Database:
             return {}
         valid_es = [s for s in series if s.get("es") is not None and s["es"] > 0]
         valid_grp = [
-            s
-            for s in series
+            s for s in series
             if s.get("groupement_mm") is not None and s["groupement_mm"] > 0
         ]
         result = {}
@@ -351,9 +505,9 @@ class Database:
     def close(self):
         self.conn.close()
 
-    def seed_default_setup(self):
-        """Pre-fill with user's Victrix setup if no setups exist."""
-        if self.get_setups():
+    def seed_default_setup(self, user_id: Optional[int] = None):
+        """Pre-fill with Victrix setup if no setups exist for user."""
+        if self.get_setups(user_id):
             return
         setup_id = self.create_setup({
             "nom": "Victrix Armaments Orb",
@@ -366,40 +520,23 @@ class Database:
             "cbto_lands_mm": 58.57,
             "oal_ref_mm": 73.73,
             "notes": "Référence VI15003 – Canon fileté 30 pouces",
-        })
-        # Ogive
+        }, user_id=user_id)
         self.add_composant(setup_id, {
-            "type": "Ogive",
-            "marque": "Hornady",
-            "modele": "140gr ELD-Match",
-            "details": {
-                "poids_gr": 140,
-                "bc_g7": {"2.25": 0.326, "2.0": 0.320, "1.75": 0.310},
-                "bc_g1": {"2.25": 0.646, "2.0": 0.637, "1.75": 0.616},
-            },
+            "type": "Ogive", "marque": "Hornady", "modele": "140gr ELD-Match",
+            "details": {"poids_gr": 140,
+                        "bc_g7": {"2.25": 0.326, "2.0": 0.320, "1.75": 0.310},
+                        "bc_g1": {"2.25": 0.646, "2.0": 0.637, "1.75": 0.616}},
         })
-        # Poudre
         self.add_composant(setup_id, {
-            "type": "Poudre",
-            "marque": "Winchester",
-            "modele": "StaBALL 6.5",
-            "details": {
-                "charge_min_gr": 35.0,
-                "charge_max_gr": 41.5,
-                "pression_max_psi": 62000,
-            },
+            "type": "Poudre", "marque": "Winchester", "modele": "StaBALL 6.5",
+            "details": {"charge_min_gr": 35.0, "charge_max_gr": 41.5,
+                        "pression_max_psi": 62000},
         })
-        # Amorce
         self.add_composant(setup_id, {
-            "type": "Amorce",
-            "marque": "CCI",
-            "modele": "#400 Small Rifle",
+            "type": "Amorce", "marque": "CCI", "modele": "#400 Small Rifle",
             "details": {},
         })
-        # Étuis
         self.add_composant(setup_id, {
-            "type": "Étuis",
-            "marque": "Sako",
-            "modele": "6.5 CM Small Rifle Primer",
+            "type": "Étuis", "marque": "Sako", "modele": "6.5 CM Small Rifle Primer",
             "details": {},
         })
