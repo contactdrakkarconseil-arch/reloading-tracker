@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="text-xl font-bold mb-4">Nouvelle Session</h1>
+
+<form id="session-form" autocomplete="off">
+
+    <!-- ══ ÉTAPE A : Session ══ -->
+    <div class="accordion" data-step="A">
+        <button type="button" class="accordion-header active" onclick="toggleStep('A')">
+            <span>A. Session</span>
+            <svg class="accordion-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div class="accordion-body open">
+            <label class="field-label">Setup</label>
+            <select id="setup_id" class="field-input" required>
+                <option value="">Sélectionner...</option>
+                {% for s in setups %}
+                <option value="{{ s.id }}">{{ s.nom }} – {{ s.calibre }}</option>
+                {% endfor %}
+            </select>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Date</label>
+                    <input type="date" id="date" class="field-input" value="{{ today }}">
+                </div>
+                <div>
+                    <label class="field-label">Phase</label>
+                    <select id="phase" class="field-input">
+                        <option>Phase 1</option>
+                        <option>Phase 2</option>
+                        <option>Phase 3</option>
+                        <option>Validation</option>
+                    </select>
+                </div>
+            </div>
+
+            <label class="field-label">Lieu</label>
+            <input type="text" id="lieu" class="field-input" placeholder="Stand de tir...">
+
+            <!-- Météo collapsible -->
+            <button type="button" class="meteo-toggle" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                Conditions météo ▾
+            </button>
+            <div class="hidden mt-2">
+                <div class="grid grid-cols-3 gap-2">
+                    <div>
+                        <label class="field-label text-xs">Temp (°C)</label>
+                        <input type="number" id="meteo_temperature" class="field-input text-sm" value="20" step="1">
+                    </div>
+                    <div>
+                        <label class="field-label text-xs">Vent (m/s)</label>
+                        <input type="number" id="meteo_vent_force" class="field-input text-sm" value="0" step="1">
+                    </div>
+                    <div>
+                        <label class="field-label text-xs">Dir. vent</label>
+                        <input type="text" id="meteo_vent_dir" class="field-input text-sm" placeholder="N, NE...">
+                    </div>
+                    <div>
+                        <label class="field-label text-xs">Humid. (%)</label>
+                        <input type="number" id="meteo_hygro" class="field-input text-sm" value="50" step="1">
+                    </div>
+                    <div>
+                        <label class="field-label text-xs">Altitude (m)</label>
+                        <input type="number" id="meteo_altitude" class="field-input text-sm" value="0" step="1">
+                    </div>
+                    <div>
+                        <label class="field-label text-xs">Press. (hPa)</label>
+                        <input type="number" id="meteo_pression" class="field-input text-sm" value="1013" step="1">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ ÉTAPE B : Charge ══ -->
+    <div class="accordion" data-step="B">
+        <button type="button" class="accordion-header" onclick="toggleStep('B')">
+            <span>B. Charge & Dimensions</span>
+            <svg class="accordion-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div class="accordion-body">
+            <!-- Powder info banner -->
+            <div id="powder-info" class="hidden powder-banner mb-3">
+                <span id="powder-name"></span>
+                <span id="powder-range" class="text-xs"></span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Charge (gr)</label>
+                    <input type="number" id="charge_gr" class="field-input" step="0.1" required
+                           oninput="checkCharge()">
+                    <div id="charge-warning" class="charge-indicator"></div>
+                </div>
+                <div>
+                    <label class="field-label">Distance (m)</label>
+                    <input type="number" id="distance_m" class="field-input" value="100" step="1">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">OAL (mm)</label>
+                    <input type="number" id="oal_mm" class="field-input" step="0.01">
+                </div>
+                <div>
+                    <label class="field-label">CBTO (mm)</label>
+                    <input type="number" id="cbto_mm" class="field-input" step="0.01"
+                           oninput="calcJump()">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="field-label">Jump</label>
+                    <div id="jump-display" class="jump-value">—</div>
+                </div>
+                <div>
+                    <label class="field-label">Nb coups</label>
+                    <input type="number" id="nb_coups" class="field-input" value="5" min="1" max="20"
+                           onchange="updateVelocityFields()">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ ÉTAPE C : Résultats ══ -->
+    <div class="accordion" data-step="C">
+        <button type="button" class="accordion-header" onclick="toggleStep('C')">
+            <span>C. Résultats</span>
+            <svg class="accordion-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div class="accordion-body">
+            <!-- Velocity inputs -->
+            <label class="field-label">Vitesses (fps)</label>
+            <div id="velocity-fields" class="grid grid-cols-5 gap-2 mb-3">
+                <!-- Generated by JS -->
+            </div>
+
+            <!-- Live stats -->
+            <div id="live-stats" class="stats-bar mb-4">
+                <div class="stat-item">
+                    <div class="text-xs text-gray-400">V moy</div>
+                    <div id="stat-vmoy" class="text-lg font-bold">—</div>
+                </div>
+                <div class="stat-item">
+                    <div class="text-xs text-gray-400">ES</div>
+                    <div id="stat-es" class="text-lg font-bold">—</div>
+                </div>
+                <div class="stat-item">
+                    <div class="text-xs text-gray-400">SD</div>
+                    <div id="stat-sd" class="text-lg font-bold">—</div>
+                </div>
+            </div>
+
+            <!-- Groupement -->
+            <div class="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                    <label class="field-label">Groupement (mm)</label>
+                    <input type="number" id="groupement_mm" class="field-input" step="0.1"
+                           oninput="calcMoa()">
+                </div>
+                <div>
+                    <label class="field-label">MOA</label>
+                    <div id="moa-display" class="jump-value">—</div>
+                </div>
+            </div>
+
+            <!-- Signes de surpression -->
+            <label class="field-label">Signes de surpression</label>
+            <div class="pression-grid mb-3">
+                <label class="pression-check">
+                    <input type="checkbox" name="pression" value="cratering">
+                    <span>Primer cratering</span>
+                </label>
+                <label class="pression-check">
+                    <input type="checkbox" name="pression" value="sticky_bolt">
+                    <span>Sticky bolt</span>
+                </label>
+                <label class="pression-check">
+                    <input type="checkbox" name="pression" value="flat_primer">
+                    <span>Amorce plate</span>
+                </label>
+                <label class="pression-check">
+                    <input type="checkbox" name="pression" value="case_blackening">
+                    <span>Noircissement étui</span>
+                </label>
+            </div>
+
+            <!-- Observations -->
+            <label class="field-label">Observations</label>
+            <textarea id="observations" class="field-input" rows="2" placeholder="Notes..."></textarea>
+        </div>
+    </div>
+
+    <!-- Submit -->
+    <button type="submit" id="btn-save" class="btn-primary w-full mt-4 mb-8">
+        Enregistrer la session
+    </button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Init velocity fields on load
+    document.addEventListener('DOMContentLoaded', () => {
+        updateVelocityFields();
+        // Load powder info when setup changes
+        document.getElementById('setup_id').addEventListener('change', loadPowderInfo);
+    });
+</script>
+{% endblock %}

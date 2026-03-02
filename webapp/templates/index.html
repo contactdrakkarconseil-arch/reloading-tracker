@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Reloading Tracker</h1>
+
+<!-- Quick stats -->
+<div class="grid grid-cols-2 gap-3 mb-6">
+    <div class="card text-center">
+        <div class="text-3xl font-bold text-blue-400">{{ total_sessions }}</div>
+        <div class="text-xs text-gray-400 mt-1">Sessions</div>
+    </div>
+    <div class="card text-center">
+        <div class="text-3xl font-bold text-blue-400">{{ setups|length }}</div>
+        <div class="text-xs text-gray-400 mt-1">Setups</div>
+    </div>
+</div>
+
+<!-- Best per setup -->
+{% for setup in setups %}
+{% set stats = best_stats.get(setup.id, {}) %}
+{% if stats %}
+<div class="card mb-3">
+    <div class="text-sm font-semibold text-blue-400 mb-2">{{ setup.nom }} – {{ setup.calibre }}</div>
+    <div class="grid grid-cols-3 gap-2 text-center text-xs">
+        {% if stats.best_es is defined %}
+        <div>
+            <div class="text-lg font-bold es-{{ es_color(stats.best_es) }}">{{ "%.0f"|format(stats.best_es) }}</div>
+            <div class="text-gray-500">Meilleur ES</div>
+            <div class="text-gray-500">@ {{ "%.1f"|format(stats.best_es_charge) }} gr</div>
+        </div>
+        {% endif %}
+        {% if stats.best_group_mm is defined %}
+        <div>
+            <div class="text-lg font-bold text-green-400">{{ "%.1f"|format(stats.best_group_mm) }} mm</div>
+            <div class="text-gray-500">Meilleur grp</div>
+            <div class="text-gray-500">@ {{ "%.1f"|format(stats.best_group_charge) }} gr</div>
+        </div>
+        {% endif %}
+        {% if stats.charge_retenue is defined %}
+        <div>
+            <div class="text-lg font-bold text-yellow-400">{{ "%.1f"|format(stats.charge_retenue) }} gr</div>
+            <div class="text-gray-500">Charge retenue</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+
+<!-- Quick action -->
+<a href="/new" class="btn-primary block text-center mb-6">
+    + Nouvelle Session
+</a>
+
+<!-- Recent sessions -->
+{% if recent %}
+<h2 class="text-lg font-semibold mb-3">Dernières sessions</h2>
+{% for s in recent %}
+<div class="card mb-3">
+    <div class="flex justify-between items-start mb-2">
+        <div>
+            <div class="text-sm font-semibold">{{ s.setup_nom }}</div>
+            <div class="text-xs text-gray-400">{{ s.date }} – {{ s.lieu or '—' }}</div>
+        </div>
+        <span class="badge">{{ s.phase }}</span>
+    </div>
+    {% for serie in s.series %}
+    <div class="serie-row">
+        <span class="font-medium">{{ "%.1f"|format(serie.charge_gr) }} gr</span>
+        {% if serie.v_moy %}
+        <span class="text-gray-400">{{ "%.0f"|format(serie.v_moy) }} fps</span>
+        {% endif %}
+        {% if serie.es is not none %}
+        <span class="es-{{ es_color(serie.es) }}">ES {{ "%.0f"|format(serie.es) }}</span>
+        {% endif %}
+        {% if serie.sd is not none %}
+        <span class="text-gray-400">SD {{ "%.1f"|format(serie.sd) }}</span>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+{% else %}
+<div class="text-center text-gray-500 py-8">
+    Aucune session enregistrée.<br>
+    <a href="/new" class="text-blue-400">Créer la première</a>
+</div>
+{% endif %}
+{% endblock %}

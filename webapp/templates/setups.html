@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="text-xl font-bold mb-4">Mes Setups</h1>
+
+{% for item in setups_data %}
+{% set s = item.setup %}
+{% set composants = item.composants %}
+{% set best = item.best %}
+
+<div class="card mb-4">
+    <div class="flex justify-between items-start mb-3">
+        <div>
+            <div class="text-lg font-bold">{{ s.nom }}</div>
+            <div class="text-sm text-blue-400">{{ s.calibre }}</div>
+        </div>
+    </div>
+
+    <!-- Specs -->
+    <div class="grid grid-cols-2 gap-y-1 text-sm mb-3">
+        {% if s.longueur_canon_mm %}
+        <div class="text-gray-400">Canon</div>
+        <div>{{ "%.0f"|format(s.longueur_canon_mm) }} mm ({{ "%.1f"|format(s.longueur_canon_mm / 25.4) }}")</div>
+        {% endif %}
+        {% if s.twist %}
+        <div class="text-gray-400">Twist</div>
+        <div>{{ s.twist }}</div>
+        {% endif %}
+        {% if s.cbto_lands_mm %}
+        <div class="text-gray-400">CBTO Lands</div>
+        <div>{{ "%.2f"|format(s.cbto_lands_mm) }} mm</div>
+        {% endif %}
+        {% if s.oal_ref_mm %}
+        <div class="text-gray-400">OAL réf.</div>
+        <div>{{ "%.2f"|format(s.oal_ref_mm) }} mm</div>
+        {% endif %}
+        {% if s.suppresseur %}
+        <div class="text-gray-400">Suppressor</div>
+        <div>{{ s.suppresseur }}</div>
+        {% endif %}
+        {% if s.chrono %}
+        <div class="text-gray-400">Chrono</div>
+        <div>{{ s.chrono }}</div>
+        {% endif %}
+    </div>
+
+    <!-- Composants -->
+    {% for c in composants %}
+    <div class="composant-row">
+        <span class="composant-type">{{ c.type }}</span>
+        <span>{{ c.marque }} {{ c.modele }}</span>
+        {% if c.type == 'Poudre' and c.details %}
+            <div class="text-xs text-gray-500 ml-auto">
+                {{ c.details.get('charge_min_gr', '') }}–{{ c.details.get('charge_max_gr', '') }} gr
+            </div>
+        {% endif %}
+        {% if c.type == 'Ogive' and c.details and c.details.get('poids_gr') %}
+            <span class="text-xs text-gray-500 ml-auto">{{ c.details.poids_gr }} gr</span>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    <!-- Best stats -->
+    {% if best %}
+    <div class="mt-3 pt-3 border-t border-gray-800">
+        <div class="grid grid-cols-3 gap-2 text-center text-xs">
+            {% if best.best_es is defined %}
+            <div>
+                <div class="font-bold text-green-400">ES {{ "%.0f"|format(best.best_es) }}</div>
+                <div class="text-gray-500">@ {{ "%.1f"|format(best.best_es_charge) }} gr</div>
+            </div>
+            {% endif %}
+            {% if best.best_group_mm is defined %}
+            <div>
+                <div class="font-bold text-green-400">{{ "%.1f"|format(best.best_group_mm) }} mm</div>
+                <div class="text-gray-500">@ {{ "%.1f"|format(best.best_group_charge) }} gr</div>
+            </div>
+            {% endif %}
+            {% if best.charge_retenue is defined %}
+            <div>
+                <div class="font-bold text-yellow-400">{{ "%.1f"|format(best.charge_retenue) }} gr</div>
+                <div class="text-gray-500">retenue</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if s.notes %}
+    <div class="text-xs text-gray-500 mt-2 italic">{{ s.notes }}</div>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% if not setups_data %}
+<div class="text-center text-gray-500 py-8">
+    Aucun setup configuré.
+</div>
+{% endif %}
+{% endblock %}

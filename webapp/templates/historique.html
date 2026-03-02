@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="text-xl font-bold mb-4">Historique</h1>
+
+<!-- Filter -->
+<div class="mb-4">
+    <select id="filter-setup" class="field-input text-sm" onchange="filterSetup(this.value)">
+        <option value="">Tous les setups</option>
+        {% for s in setups %}
+        <option value="{{ s.id }}" {% if selected_setup == s.id %}selected{% endif %}>
+            {{ s.nom }}
+        </option>
+        {% endfor %}
+    </select>
+</div>
+
+{% if sessions %}
+{% set ns = namespace(current_date='') %}
+{% for s in sessions %}
+    <!-- Date separator -->
+    {% if s.date != ns.current_date %}
+    {% set ns.current_date = s.date %}
+    <div class="date-separator">{{ s.date }}</div>
+    {% endif %}
+
+    <div class="card mb-3 session-card" data-session-id="{{ s.id }}">
+        <div class="flex justify-between items-start mb-2">
+            <div>
+                <div class="text-sm font-semibold">{{ s.setup_nom }}</div>
+                <div class="text-xs text-gray-400">{{ s.lieu or '—' }} · {{ s.phase }}</div>
+            </div>
+            {% if s.meteo.get('temperature') %}
+            <span class="text-xs text-gray-500">{{ s.meteo.temperature }}°C</span>
+            {% endif %}
+        </div>
+
+        {% for serie in s.series %}
+        <div class="serie-row" onclick="toggleDetail(this)">
+            <div class="flex justify-between items-center w-full">
+                <span class="font-medium">{{ "%.1f"|format(serie.charge_gr) }} gr</span>
+                <div class="flex gap-3 text-sm">
+                    {% if serie.v_moy %}
+                    <span class="text-gray-400">{{ "%.0f"|format(serie.v_moy) }} fps</span>
+                    {% endif %}
+                    {% if serie.es is not none %}
+                    <span class="es-{{ es_color(serie.es) }} font-semibold">ES {{ "%.0f"|format(serie.es) }}</span>
+                    {% endif %}
+                    {% if serie.sd is not none %}
+                    <span class="text-gray-400">SD {{ "%.1f"|format(serie.sd) }}</span>
+                    {% endif %}
+                    {% if serie.groupement_mm %}
+                    <span class="text-gray-300">{{ "%.1f"|format(serie.groupement_mm) }}mm
+                        <span class="text-gray-500">({{ "%.2f"|format(mm_to_moa(serie.groupement_mm, serie.distance_m or 100)) }} MOA)</span>
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Detail (hidden by default) -->
+            <div class="serie-detail hidden">
+                {% if serie.vitesses %}
+                <div class="text-xs text-gray-400 mt-2">
+                    Vitesses : {{ serie.vitesses | join(', ') }} fps
+                </div>
+                {% endif %}
+                {% if serie.oal_mm %}
+                <div class="text-xs text-gray-500">OAL: {{ "%.2f"|format(serie.oal_mm) }} mm</div>
+                {% endif %}
+                {% if serie.cbto_mm %}
+                <div class="text-xs text-gray-500">CBTO: {{ "%.2f"|format(serie.cbto_mm) }} mm</div>
+                {% endif %}
+                {% if serie.jump_mm %}
+                <div class="text-xs text-gray-500">Jump: {{ "%.2f"|format(serie.jump_mm) }} mm ({{ "%.1f"|format(serie.jump_mm / 25.4 * 1000) }} thou)</div>
+                {% endif %}
+                {% if serie.signes_pression %}
+                <div class="text-xs text-red-400 mt-1">Pression: {{ serie.signes_pression | join(', ') }}</div>
+                {% endif %}
+                {% if serie.observations %}
+                <div class="text-xs text-gray-400 mt-1 italic">{{ serie.observations }}</div>
+                {% endif %}
+                {% if serie.charge_retenue %}
+                <div class="text-xs text-yellow-400 mt-1 font-semibold">★ Charge retenue</div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% endfor %}
+{% else %}
+<div class="text-center text-gray-500 py-8">
+    Aucune session trouvée.
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterSetup(val) {
+    const url = val ? '/history?setup_id=' + val : '/history';
+    window.location.href = url;
+}
+
+function toggleDetail(el) {
+    const detail = el.querySelector('.serie-detail');
+    if (detail) detail.classList.toggle('hidden');
+}
+</script>
+{% endblock %}
