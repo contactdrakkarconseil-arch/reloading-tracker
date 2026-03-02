@@ -76,7 +76,6 @@ class Database:
                 email TEXT UNIQUE NOT NULL,
                 name TEXT NOT NULL,
                 password_hash TEXT,
-                google_id TEXT UNIQUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )""",
             """CREATE TABLE IF NOT EXISTS setups (
@@ -155,13 +154,12 @@ class Database:
     def create_user(self, data: Dict[str, Any]) -> int:
         cursor = self.conn.cursor()
         cursor.execute("""
-            INSERT INTO users (email, name, password_hash, google_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO users (email, name, password_hash)
+            VALUES (?, ?, ?)
         """, (
             data["email"],
             data["name"],
             data.get("password_hash"),
-            data.get("google_id"),
         ))
         self.conn.commit()
         return cursor.lastrowid
@@ -177,18 +175,6 @@ class Database:
         cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
         row = cursor.fetchone()
         return _row_to_dict(cursor, row) if row else None
-
-    def get_user_by_google_id(self, google_id: str) -> Optional[Dict]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
-        row = cursor.fetchone()
-        return _row_to_dict(cursor, row) if row else None
-
-    def update_user_google_id(self, user_id: int, google_id: str):
-        self.conn.execute(
-            "UPDATE users SET google_id = ? WHERE id = ?", (google_id, user_id)
-        )
-        self.conn.commit()
 
     # ── Setups ───────────────────────────────────────────────
 

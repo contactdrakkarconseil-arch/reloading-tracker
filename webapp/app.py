@@ -27,12 +27,11 @@ login_manager.login_view = "login"
 
 
 class User(UserMixin):
-    def __init__(self, id, email, name, password_hash=None, google_id=None):
+    def __init__(self, id, email, name, password_hash=None):
         self.id = id
         self.email = email
         self.name = name
         self.password_hash = password_hash
-        self.google_id = google_id
 
     @staticmethod
     def from_db(row):
@@ -43,7 +42,6 @@ class User(UserMixin):
             email=row["email"],
             name=row["name"],
             password_hash=row.get("password_hash"),
-            google_id=row.get("google_id"),
         )
 
 
@@ -51,60 +49,6 @@ class User(UserMixin):
 def load_user(user_id):
     row = get_db().get_user(int(user_id))
     return User.from_db(row)
-
-
-# ── Google OAuth (Flask-Dance) ───────────────────────────────
-
-google_client_id = os.environ.get("GOOGLE_CLIENT_ID")
-google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-
-if google_client_id and google_client_secret:
-    from flask_dance.contrib.google import make_google_blueprint, google as google_session
-    from flask_dance.consumer import oauth_authorized
-
-    # Required for OAuth over HTTP in dev
-    os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
-
-    google_bp = make_google_blueprint(
-        client_id=google_client_id,
-        client_secret=google_client_secret,
-        scope=["openid", "email", "profile"],
-        redirect_url="/auth/google/authorized",
-    )
-    app.register_blueprint(google_bp, url_prefix="/auth")
-
-    @oauth_authorized.connect_via(google_bp)
-    def google_logged_in(blueprint, token):
-        if not token:
-            return False
-        resp = blueprint.session.get("/oauth2/v1/userinfo")
-        if not resp.ok:
-            return False
-        info = resp.json()
-        db = get_db()
-
-        # Check if user exists by google_id
-        user_row = db.get_user_by_google_id(info["id"])
-        if not user_row:
-            # Check by email (might have registered with password first)
-            user_row = db.get_user_by_email(info["email"])
-            if user_row:
-                db.update_user_google_id(user_row["id"], info["id"])
-            else:
-                user_id = db.create_user({
-                    "email": info["email"],
-                    "name": info.get("name", info["email"]),
-                    "google_id": info["id"],
-                })
-                user_row = db.get_user(user_id)
-                db.seed_default_setup(user_id=user_row["id"])
-
-        login_user(User.from_db(user_row), remember=True)
-        return False  # Don't store token in session
-
-    _has_google = True
-else:
-    _has_google = False
 
 
 # ── Database ─────────────────────────────────────────────────
@@ -132,8 +76,6 @@ def _uid():
 @app.before_request
 def require_login():
     public = {"login", "register", "static", "health"}
-    if _has_google:
-        public.update({"google.login", "google.authorized"})
     if request.endpoint and request.endpoint in public:
         return None
     if not current_user.is_authenticated:
@@ -159,9 +101,9 @@ def login():
             login_user(User.from_db(user_row), remember=True)
             return redirect(url_for("index"))
         else:
-            return render_template("login.html", error="Email ou mot de passe incorrect", has_google=_has_google)
+            return render_template("login.html", error="Email ou mot de passe incorrect")
 
-    return render_template("login.html", has_google=_has_google)
+    return render_template("login.html")
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -175,13 +117,13 @@ def register():
         password = request.form.get("password", "")
 
         if not email or not name or not password:
-            return render_template("register.html", error="Tous les champs sont requis", has_google=_has_google)
+            return render_template("register.html", error="Tous les champs sont requis")
         if len(password) < 6:
-            return render_template("register.html", error="Mot de passe : 6 caractères minimum", has_google=_has_google)
+            return render_template("register.html", error="Mot de passe : 6 caractères minimum")
 
         db = get_db()
         if db.get_user_by_email(email):
-            return render_template("register.html", error="Cet email est déjà utilisé", has_google=_has_google)
+            return render_template("register.html", error="Cet email est déjà utilisé")
 
         user_id = db.create_user({
             "email": email,
@@ -192,7 +134,7 @@ def register():
         login_user(User.from_db(db.get_user(user_id)), remember=True)
         return redirect(url_for("index"))
 
-    return render_template("register.html", has_google=_has_google)
+    return render_template("register.html")
 
 
 @app.route("/logout")
